@@ -11,6 +11,7 @@ enum Value {
   case Lambda(params: ScalaString, body: Expr)
   case Array(elements: List[Value])
   case Add(v1: Value, v2: Value)
+  case Concat(v1: Value, v2: Value)
   case Index(array: Value, index: Value)
   case Equality(v1: Value, v2: Value)
 
@@ -22,6 +23,7 @@ enum Value {
       case Value.Lambda(p, b)        => LowerExpr.Lambda(p, b.cps())
       case Value.Array(elements)     => LowerExpr.Array(elements.map(_.cps()))
       case Value.Add(v1, v2)         => LowerExpr.Add(v1.cps(), v2.cps())
+      case Value.Concat(v1, v2)      => LowerExpr.Concat(v1.cps(), v2.cps())
       case Value.Equality(v1, v2)    => LowerExpr.Equality(v1.cps(), v2.cps())
       case Value.Index(array, index) =>
         LowerExpr.Index(array.cps(), index.cps())
@@ -65,7 +67,7 @@ enum Expr {
       case Expr.Handle(expr, handler) => {
         val loweredExpr = expr.cps()
         val loweredReturn = handler.returnClause.cps()
-        val loweredOperation = handler.operationClause.cps()
+        val loweredOperation = handler.cpsOperation()
 
         LowerExpr.App(
           LowerExpr.App(
@@ -116,8 +118,7 @@ case class OperationClause(
     resumption: ScalaString,
     body: Expr
 ) {
-  def cps(): LowerExpr = {
-    val bodyCps = body.cps()
+  def cpsWithFallback(fallback: LowerExpr): LowerExpr = {
     val expectedLabel = LowerExpr.String(this.label)
     val labelArgLower =
       LowerExpr.Index(LowerExpr.Var("__triplet"), LowerExpr.Num(0))
@@ -143,25 +144,59 @@ case class OperationClause(
       )
       .cps()
 
-    val forward = {
-      val newResumption =
-        LowerExpr.Lambda(
-          "__x",
+    LowerExpr.Lambda(
+      "__triplet",
+      LowerExpr.IfElse(
+        compareLabels,
+        operationHandlerLowered,
+        LowerExpr.App(fallback, LowerExpr.Var("__triplet"))
+      )
+    )
+  }
+}
+
+/// <handler> ::= '{' <returnClause> <operationClause>* '}'
+case class Handler(
+    returnClause: ReturnClause,
+    operationClauses: List[OperationClause]
+) {
+  def cpsOperation(): LowerExpr =
+    operationClauses.foldRight(Handler.forwardUnhandledOperation) {
+      (operationClause, fallback) =>
+        operationClause.cpsWithFallback(fallback)
+    }
+}
+
+object Handler {
+  private val tripletVar = "__triplet"
+
+  private def forwardUnhandledOperation: LowerExpr = {
+    val labelArgLower =
+      LowerExpr.Index(LowerExpr.Var(tripletVar), LowerExpr.Num(0))
+    val paramArgLower =
+      LowerExpr.Index(LowerExpr.Var(tripletVar), LowerExpr.Num(1))
+    val resumptionArgLower =
+      LowerExpr.Index(LowerExpr.Var(tripletVar), LowerExpr.Num(2))
+    val newResumption =
+      LowerExpr.Lambda(
+        "__x",
+        LowerExpr.App(
           LowerExpr.App(
             LowerExpr.App(
-              LowerExpr.App(
-                resumptionArgLower,
-                LowerExpr.Var("__x")
-              ),
-              LowerExpr.Var("__k")
+              resumptionArgLower,
+              LowerExpr.Var("__x")
             ),
-            LowerExpr.Var("__h")
-          )
-        );
-      val newTriplet = LowerExpr.Array(
-        labelArgLower :: paramArgLower :: newResumption :: Nil
+            LowerExpr.Var("__k")
+          ),
+          LowerExpr.Var("__h")
+        )
       )
+    val newTriplet = LowerExpr.Array(
+      labelArgLower :: paramArgLower :: newResumption :: Nil
+    )
 
+    LowerExpr.Lambda(
+      tripletVar,
       LowerExpr.Lambda(
         "__k",
         LowerExpr.Lambda(
@@ -169,21 +204,6 @@ case class OperationClause(
           LowerExpr.App(LowerExpr.Var("__h"), newTriplet)
         )
       )
-    };
-
-    LowerExpr.Lambda(
-      "__triplet",
-      LowerExpr.IfElse(
-        compareLabels,
-        operationHandlerLowered,
-        forward
-      )
     )
   }
 }
-
-/// <handler> ::= '{' <returnClause> <operationClause> '}'
-case class Handler(
-    returnClause: ReturnClause,
-    operationClause: OperationClause
-)

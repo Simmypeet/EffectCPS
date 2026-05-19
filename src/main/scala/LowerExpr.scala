@@ -6,6 +6,7 @@ enum LowerExpr {
     case Num(n: Int)
     case String(s: ScalaString)
     case Add(e1: LowerExpr, e2: LowerExpr)
+    case Concat(e1: LowerExpr, e2: LowerExpr)
     case Lambda(params: ScalaString, body: LowerExpr)
     case Var(name: ScalaString)
     case App(func: LowerExpr, args: LowerExpr)
@@ -42,6 +43,12 @@ object LowerExpr {
                 (
                     s"${render(e1, Precedence.Add)} + ${render(e2, Precedence.Add)}",
                     Precedence.Add
+                )
+
+            case LowerExpr.Concat(e1, e2) =>
+                (
+                    s"${render(e1, Precedence.Postfix)}.concat(${render(e2, Precedence.Lowest)})",
+                    Precedence.Postfix
                 )
 
             case LowerExpr.Equality(v1, v2) =>
