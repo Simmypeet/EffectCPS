@@ -4,6 +4,81 @@ import lowerExpr.LowerExpr
 
 import scala.Predef.{String as ScalaString}
 
+trait LoweringStrategy {
+  def lowerReturn(value: Value): LowerExpr
+  def lowerDo(label: ScalaString, arg: Value): LowerExpr
+  def lowerHandle(expr: LowerExpr, handler: Handler): LowerExpr
+  def lowerLet(
+      name: Option[ScalaString],
+      expr: LowerExpr,
+      body: LowerExpr
+  ): LowerExpr
+}
+
+object LoweringStrategy {
+  given default: LoweringStrategy = CuryCpsLoweringStrategy
+}
+
+object CuryCpsLoweringStrategy extends LoweringStrategy {
+  override def lowerReturn(value: Value): LowerExpr =
+    LowerExpr.Lambda(
+      "__k",
+      LowerExpr.App(LowerExpr.Var("__k"), value.cps()(using this))
+    )
+
+  override def lowerDo(label: ScalaString, arg: Value): LowerExpr = {
+    val loweredArg = arg.cps()(using this)
+    val cont = LowerExpr.Lambda(
+      "x",
+      LowerExpr.App(
+        LowerExpr.App(
+          LowerExpr.Var("__k"),
+          LowerExpr.Var("x")
+        ),
+        LowerExpr.Var("__h")
+      )
+    )
+    val argTriplet = LowerExpr.Array(
+      LowerExpr.String(label) :: loweredArg :: cont :: Nil
+    )
+
+    LowerExpr.Lambda(
+      "__k",
+      LowerExpr.Lambda(
+        "__h",
+        LowerExpr.App(LowerExpr.Var("__h"), argTriplet)
+      )
+    )
+  }
+
+  override def lowerHandle(expr: LowerExpr, handler: Handler): LowerExpr = {
+    val loweredReturn = handler.returnClause.cps()(using this)
+    val loweredOperation = handler.cpsOperation()(using this)
+
+    LowerExpr.App(
+      LowerExpr.App(
+        expr,
+        loweredReturn
+      ),
+      loweredOperation
+    )
+  }
+
+  override def lowerLet(
+      name: Option[ScalaString],
+      expr: LowerExpr,
+      body: LowerExpr
+  ): LowerExpr = {
+    val cont = LowerExpr.Lambda(
+      name.getOrElse("_"),
+      LowerExpr.App(body, LowerExpr.Var("__k"))
+    )
+
+    LowerExpr.Lambda("__k", LowerExpr.App(expr, cont))
+  }
+
+}
+
 enum Value {
   case Num(n: Int)
   case String(s: ScalaString)
@@ -15,7 +90,7 @@ enum Value {
   case Index(array: Value, index: Value)
   case Equality(v1: Value, v2: Value)
 
-  def cps(): LowerExpr = {
+  def cps()(implicit strategy: LoweringStrategy): LowerExpr = {
     this match {
       case Value.Num(n)              => LowerExpr.Num(n)
       case Value.Var(name)           => LowerExpr.Var(name)
@@ -39,24 +114,13 @@ enum Expr {
   case Handle(expr: Expr, handler: Handler)
   case IfElse(cond: Value, thenBranch: Expr, elseBranch: Expr)
 
-  def cps(): LowerExpr = {
+  def cps()(implicit strategy: LoweringStrategy): LowerExpr = {
     this match {
       case Expr.App(func, arg)        => LowerExpr.App(func.cps(), arg.cps())
-      case Expr.Let(name, expr, body) => {
-        val loweredExpr = expr.cps()
-        val loweredBody = body.cps()
-        val cont = LowerExpr.Lambda(
-          name.getOrElse("_"),
-          LowerExpr.App(loweredBody, LowerExpr.Var("__k"))
-        )
-
-        LowerExpr.Lambda("__k", LowerExpr.App(loweredExpr, cont))
-      }
+      case Expr.Let(name, expr, body) =>
+        strategy.lowerLet(name, expr.cps(), body.cps())
       case Expr.Return(value) =>
-        LowerExpr.Lambda(
-          "__k",
-          LowerExpr.App(LowerExpr.Var("__k"), value.cps())
-        )
+        strategy.lowerReturn(value)
       case Expr.IfElse(cond, thenBranch, elseBranch) => {
         val loweredCond = cond.cps()
         val loweredThen = thenBranch.cps()
@@ -64,50 +128,17 @@ enum Expr {
 
         LowerExpr.IfElse(loweredCond, loweredThen, loweredElse)
       }
-      case Expr.Handle(expr, handler) => {
-        val loweredExpr = expr.cps()
-        val loweredReturn = handler.returnClause.cps()
-        val loweredOperation = handler.cpsOperation()
-
-        LowerExpr.App(
-          LowerExpr.App(
-            loweredExpr,
-            loweredReturn
-          ),
-          loweredOperation
-        )
-      }
-      case Expr.Do(label, arg) => {
-        val loweredArg = arg.cps()
-        val cont = LowerExpr.Lambda(
-          "x",
-          LowerExpr.App(
-            LowerExpr.App(
-              LowerExpr.Var("__k"),
-              LowerExpr.Var("x")
-            ),
-            LowerExpr.Var("__h")
-          )
-        );
-        val argTriplet = LowerExpr.Array(
-          LowerExpr.String(label) :: loweredArg :: cont :: Nil
-        );
-
-        LowerExpr.Lambda(
-          "__k",
-          LowerExpr.Lambda(
-            "__h",
-            LowerExpr.App(LowerExpr.Var("__h"), argTriplet)
-          )
-        )
-      }
+      case Expr.Handle(expr, handler) =>
+        strategy.lowerHandle(expr.cps(), handler)
+      case Expr.Do(label, arg) =>
+        strategy.lowerDo(label, arg)
     }
   }
 }
 
 /// <returnClause> ::= 'return' <ident> '->' <expr>
 case class ReturnClause(param: ScalaString, body: Expr) {
-  def cps(): LowerExpr =
+  def cps()(implicit strategy: LoweringStrategy): LowerExpr =
     LowerExpr.Lambda(this.param, LowerExpr.Lambda("_", this.body.cps()))
 }
 
@@ -118,7 +149,9 @@ case class OperationClause(
     resumption: ScalaString,
     body: Expr
 ) {
-  def cpsWithFallback(fallback: LowerExpr): LowerExpr = {
+  def cpsWithFallback(
+      fallback: LowerExpr
+  )(implicit strategy: LoweringStrategy): LowerExpr = {
     val expectedLabel = LowerExpr.String(this.label)
     val labelArgLower =
       LowerExpr.Index(LowerExpr.Var("__triplet"), LowerExpr.Num(0))
@@ -160,7 +193,7 @@ case class Handler(
     returnClause: ReturnClause,
     operationClauses: List[OperationClause]
 ) {
-  def cpsOperation(): LowerExpr =
+  def cpsOperation()(implicit strategy: LoweringStrategy): LowerExpr =
     operationClauses.foldRight(Handler.forwardUnhandledOperation) {
       (operationClause, fallback) =>
         operationClause.cpsWithFallback(fallback)

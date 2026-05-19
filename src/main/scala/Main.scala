@@ -1,8 +1,4 @@
-
-@main 
-def hello(): Unit =
-  println("Hello world!")
-  println(msg)
-
-
-def msg = "I was compiled by Scala 3. :)"
+@main
+def emitDrunkTossJs(): Unit =
+  val outputPath = Examples.writeDrunkTossJavaScript()
+  println(s"Wrote $outputPath")
