@@ -1,9 +1,28 @@
-// For more information on writing tests, see
-// https://scalameta.org/munit/docs/getting-started.html
+import lowerExpr.LowerExpr
+
 class MySuite extends munit.FunSuite {
-  test("example test that succeeds") {
-    val obtained = 42
-    val expected = 42
-    assertEquals(obtained, expected)
+  test("emits JavaScript for lambda application") {
+    val expr = LowerExpr.App(
+      LowerExpr.Lambda(
+        "x",
+        LowerExpr.Add(LowerExpr.Var("x"), LowerExpr.Num(1))
+      ),
+      LowerExpr.Num(2)
+    )
+
+    assertEquals(expr.toJavaScript, "((x) => x + 1)(2)")
+  }
+
+  test("emits JavaScript for let bindings and indexing") {
+    val expr = LowerExpr.Let(
+      Some("xs"),
+      LowerExpr.Array(List(LowerExpr.String("a\nb"), LowerExpr.Num(3))),
+      LowerExpr.Index(LowerExpr.Var("xs"), LowerExpr.Num(0))
+    )
+
+    assertEquals(
+      expr.toJavaScript,
+      """(() => { const xs = ["a\nb", 3]; return xs[0]; })()"""
+    )
   }
 }
