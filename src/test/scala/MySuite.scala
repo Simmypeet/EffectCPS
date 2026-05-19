@@ -25,4 +25,14 @@ class MySuite extends munit.FunSuite {
       """(() => { const xs = ["a\nb", 3]; return xs[0]; })()"""
     )
   }
+
+  test("emits JavaScript for equality and if-else") {
+    val expr = LowerExpr.IfElse(
+      LowerExpr.Equality(LowerExpr.Var("x"), LowerExpr.Num(0)),
+      LowerExpr.String("zero"),
+      LowerExpr.Add(LowerExpr.Var("x"), LowerExpr.Num(1))
+    )
+
+    assertEquals(expr.toJavaScript, """x === 0 ? "zero" : x + 1""")
+  }
 }

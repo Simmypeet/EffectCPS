@@ -12,6 +12,8 @@ enum LowerExpr {
     case Let(name: Option[ScalaString], value: LowerExpr, body: LowerExpr)
     case Array(elements: List[LowerExpr])
     case Index(array: LowerExpr, index: LowerExpr)
+    case Equality(v1: LowerExpr, v2: LowerExpr)
+    case IfElse(cond: LowerExpr, thenBranch: LowerExpr, elseBranch: LowerExpr)
 
     def toJavaScript: ScalaString =
         LowerExpr.render(this, LowerExpr.Precedence.Lowest)
@@ -21,9 +23,11 @@ object LowerExpr {
     private object Precedence {
         val Lowest = 0
         val Lambda = 1
-        val Add = 2
-        val Postfix = 3
-        val Atomic = 4
+        val Conditional = 2
+        val Equality = 3
+        val Add = 4
+        val Postfix = 5
+        val Atomic = 6
     }
 
     private def render(expr: LowerExpr, parentPrecedence: Int): ScalaString = {
@@ -38,6 +42,12 @@ object LowerExpr {
                 (
                     s"${render(e1, Precedence.Add)} + ${render(e2, Precedence.Add)}",
                     Precedence.Add
+                )
+
+            case LowerExpr.Equality(v1, v2) =>
+                (
+                    s"${render(v1, Precedence.Equality)} === ${render(v2, Precedence.Equality)}",
+                    Precedence.Equality
                 )
 
             case LowerExpr.Lambda(param, body) =>
@@ -71,6 +81,12 @@ object LowerExpr {
                 (
                     s"${render(array, Precedence.Postfix)}[${render(index, Precedence.Lowest)}]",
                     Precedence.Postfix
+                )
+
+            case LowerExpr.IfElse(cond, thenBranch, elseBranch) =>
+                (
+                    s"${render(cond, Precedence.Conditional)} ? ${render(thenBranch, Precedence.Lowest)} : ${render(elseBranch, Precedence.Lowest)}",
+                    Precedence.Conditional
                 )
         }
 
