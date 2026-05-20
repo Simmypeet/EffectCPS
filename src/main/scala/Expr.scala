@@ -7,16 +7,13 @@ import scala.Predef.{String as ScalaString}
 trait LoweringStrategy {
   def lowerReturn(value: Value): LowerExpr
   def lowerDo(label: ScalaString, arg: Value): LowerExpr
-  def lowerHandle(expr: LowerExpr, handler: Handler): LowerExpr
+  def lowerHandle(expr: Expr, handler: Handler): LowerExpr
   def lowerLet(
       name: Option[ScalaString],
-      expr: LowerExpr,
-      body: LowerExpr
+      expr: Expr,
+      body: Expr
   ): LowerExpr
-}
-
-object LoweringStrategy {
-  given default: LoweringStrategy = CuryCpsLoweringStrategy
+  def lowerTopLevel(expr: Expr): LowerExpr
 }
 
 object CuryCpsLoweringStrategy extends LoweringStrategy {
@@ -51,13 +48,15 @@ object CuryCpsLoweringStrategy extends LoweringStrategy {
     )
   }
 
-  override def lowerHandle(expr: LowerExpr, handler: Handler): LowerExpr = {
+  override def lowerHandle(expr: Expr, handler: Handler): LowerExpr = {
+    given LoweringStrategy = this
+
     val loweredReturn = handler.returnClause.cps()(using this)
     val loweredOperation = handler.cpsOperation()(using this)
 
     LowerExpr.App(
       LowerExpr.App(
-        expr,
+        expr.cps(),
         loweredReturn
       ),
       loweredOperation
@@ -66,17 +65,34 @@ object CuryCpsLoweringStrategy extends LoweringStrategy {
 
   override def lowerLet(
       name: Option[ScalaString],
-      expr: LowerExpr,
-      body: LowerExpr
+      expr: Expr,
+      body: Expr
   ): LowerExpr = {
+    given LoweringStrategy = this
+
     val cont = LowerExpr.Lambda(
       name.getOrElse("_"),
-      LowerExpr.App(body, LowerExpr.Var("__k"))
+      LowerExpr.App(body.cps(), LowerExpr.Var("__k"))
     )
 
-    LowerExpr.Lambda("__k", LowerExpr.App(expr, cont))
+    LowerExpr.Lambda("__k", LowerExpr.App(expr.cps(), cont))
   }
 
+  override def lowerTopLevel(expr: Expr): LowerExpr = {
+    given LoweringStrategy = this
+
+    val identReturn =
+      LowerExpr.Lambda("__x", LowerExpr.Lambda("_", LowerExpr.Var("__x")));
+    val absurdHandler = LowerExpr.Lambda("__triplet", LowerExpr.Absurd);
+
+    LowerExpr.App(
+      LowerExpr.App(
+        expr.cps(),
+        identReturn
+      ),
+      absurdHandler
+    )
+  }
 }
 
 enum Value {
@@ -118,7 +134,7 @@ enum Expr {
     this match {
       case Expr.App(func, arg)        => LowerExpr.App(func.cps(), arg.cps())
       case Expr.Let(name, expr, body) =>
-        strategy.lowerLet(name, expr.cps(), body.cps())
+        strategy.lowerLet(name, expr, body)
       case Expr.Return(value) =>
         strategy.lowerReturn(value)
       case Expr.IfElse(cond, thenBranch, elseBranch) => {
@@ -129,7 +145,7 @@ enum Expr {
         LowerExpr.IfElse(loweredCond, loweredThen, loweredElse)
       }
       case Expr.Handle(expr, handler) =>
-        strategy.lowerHandle(expr.cps(), handler)
+        strategy.lowerHandle(expr, handler)
       case Expr.Do(label, arg) =>
         strategy.lowerDo(label, arg)
     }
