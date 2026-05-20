@@ -2,6 +2,7 @@ import expr.{Expr, Handler, OperationClause, ReturnClause, Value}
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
+import expr.LoweringStrategy
 
 object Examples {
   val drunkToss: Expr = Expr.Let(
@@ -54,22 +55,22 @@ object Examples {
 
   val allChoicesDrunkToss: Expr = Expr.Handle(drunkToss, allChoicesHandler)
 
-  def renderDrunkTossJavaScript: String = {
-    val loweredJs = allChoicesDrunkToss.cps().toJavaScript
+  def renderDrunkTossJavaScript()(implicit
+      strategy: LoweringStrategy
+  ): String = {
+    val loweredJs = strategy.lowerTopLevel(allChoicesDrunkToss).toJavaScript
 
-    s"""const drunkToss = $loweredJs;
-       |const result = drunkToss((value) => value);
-       |
-       |process.stdout.write(JSON.stringify(result));
-       |""".stripMargin
+    s"process.stdout.write(JSON.stringify($loweredJs));"
   }
 
   def writeDrunkTossJavaScript(
       outputPath: Path = Path.of("drunkToss.generated.js")
+  )(implicit
+      strategy: LoweringStrategy
   ): Path = {
     Files.writeString(
       outputPath,
-      renderDrunkTossJavaScript,
+      renderDrunkTossJavaScript()(using strategy),
       StandardCharsets.UTF_8
     )
     outputPath
