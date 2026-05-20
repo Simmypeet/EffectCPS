@@ -15,6 +15,7 @@ enum LowerExpr {
     case Index(array: LowerExpr, index: LowerExpr)
     case Equality(v1: LowerExpr, v2: LowerExpr)
     case IfElse(cond: LowerExpr, thenBranch: LowerExpr, elseBranch: LowerExpr)
+    case Absurd
 
     def toJavaScript: ScalaString =
         LowerExpr.render(this, LowerExpr.Precedence.Lowest)
@@ -95,6 +96,9 @@ object LowerExpr {
                     s"${render(cond, Precedence.Conditional)} ? ${render(thenBranch, Precedence.Lowest)} : ${render(elseBranch, Precedence.Lowest)}",
                     Precedence.Conditional
                 )
+
+            case LowerExpr.Absurd =>
+                ("(() => { throw new Error(\"absurd\"); })()", Precedence.Atomic)
         }
 
         parenthesizeIfNeeded(code, precedence, parentPrecedence)
