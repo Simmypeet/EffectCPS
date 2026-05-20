@@ -52,6 +52,7 @@ Values:
 "text"
 name
 fn x => <expr>
+rec f x => <expr>
 [v1, v2, v3]
 lhs + rhs
 lhs ++ rhs

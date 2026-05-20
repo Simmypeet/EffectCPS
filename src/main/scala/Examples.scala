@@ -1,4 +1,4 @@
-import expr.{Expr, ExprCompiler, Handler, OperationClause, ReturnClause, Value}
+import expr.{BinaryOp, Expr, ExprCompiler, Handler, OperationClause, ReturnClause, Value}
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
@@ -40,7 +40,9 @@ object Examples {
           Expr.Let(
             Some("right"),
             Expr.App(Value.Var("resume"), Value.Num(0)),
-            Expr.Return(Value.Concat(Value.Var("left"), Value.Var("right")))
+            Expr.Return(
+              Value.Binary(Value.Var("left"), BinaryOp.Concat, Value.Var("right"))
+            )
           )
         )
       ),

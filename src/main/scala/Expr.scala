@@ -80,7 +80,6 @@ object CuryCpsLoweringStrategy extends LoweringStrategy {
 
   override def lowerTopLevel(expr: Expr): LowerExpr = {
     given LoweringStrategy = this
-
     val identReturn =
       LowerExpr.Lambda("__x", LowerExpr.Lambda("_", LowerExpr.Var("__x")));
     val absurdHandler = LowerExpr.Lambda("__triplet", LowerExpr.Absurd);
@@ -95,29 +94,40 @@ object CuryCpsLoweringStrategy extends LoweringStrategy {
   }
 }
 
+enum BinaryOp {
+  case Add
+  case Subtract
+  case Multiply
+  case Divide
+  case Modulo
+  case Equal
+  case NotEqual
+  case GreaterThan
+  case LessThan
+  case GreaterThanOrEqual
+  case LessThanOrEqual
+  case Concat
+  case Index
+}
+
 enum Value {
   case Num(n: Int)
   case String(s: ScalaString)
   case Var(name: ScalaString)
   case Lambda(params: ScalaString, body: Expr)
+  case Rec(name: ScalaString, params: ScalaString, body: Expr)
   case Array(elements: List[Value])
-  case Add(v1: Value, v2: Value)
-  case Concat(v1: Value, v2: Value)
-  case Index(array: Value, index: Value)
-  case Equality(v1: Value, v2: Value)
+  case Binary(left: Value, op: BinaryOp, right: Value)
 
   def cps()(implicit strategy: LoweringStrategy): LowerExpr = {
     this match {
-      case Value.Num(n)              => LowerExpr.Num(n)
-      case Value.Var(name)           => LowerExpr.Var(name)
-      case Value.String(s)           => LowerExpr.String(s)
-      case Value.Lambda(p, b)        => LowerExpr.Lambda(p, b.cps())
-      case Value.Array(elements)     => LowerExpr.Array(elements.map(_.cps()))
-      case Value.Add(v1, v2)         => LowerExpr.Add(v1.cps(), v2.cps())
-      case Value.Concat(v1, v2)      => LowerExpr.Concat(v1.cps(), v2.cps())
-      case Value.Equality(v1, v2)    => LowerExpr.Equality(v1.cps(), v2.cps())
-      case Value.Index(array, index) =>
-        LowerExpr.Index(array.cps(), index.cps())
+      case Value.Num(n)           => LowerExpr.Num(n)
+      case Value.Var(name)        => LowerExpr.Var(name)
+      case Value.String(s)        => LowerExpr.String(s)
+      case Value.Lambda(p, b)     => LowerExpr.Lambda(p, b.cps())
+      case Value.Rec(n, p, b)     => LowerExpr.Rec(n, p, b.cps())
+      case Value.Array(elements)  => LowerExpr.Array(elements.map(_.cps()))
+      case Value.Binary(l, op, r) => LowerExpr.Binary(l.cps(), op, r.cps())
     }
   }
 }
@@ -170,16 +180,21 @@ case class OperationClause(
   )(implicit strategy: LoweringStrategy): LowerExpr = {
     val expectedLabel = LowerExpr.String(this.label)
     val labelArgLower =
-      LowerExpr.Index(LowerExpr.Var("__triplet"), LowerExpr.Num(0))
-    val paramArgLower =
-      LowerExpr.Index(LowerExpr.Var("__triplet"), LowerExpr.Num(1))
-    val resumptionArgLower =
-      LowerExpr.Index(LowerExpr.Var("__triplet"), LowerExpr.Num(2))
+      LowerExpr.Binary(
+        LowerExpr.Var("__triplet"),
+        BinaryOp.Index,
+        LowerExpr.Num(0)
+      )
     val paramArg =
-      Expr.Return(Value.Index(Value.Var("__triplet"), Value.Num(1)))
+      Expr.Return(
+        Value.Binary(Value.Var("__triplet"), BinaryOp.Index, Value.Num(1))
+      )
     val resumptionArg =
-      Expr.Return(Value.Index(Value.Var("__triplet"), Value.Num(2)))
-    val compareLabels = LowerExpr.Equality(expectedLabel, labelArgLower)
+      Expr.Return(
+        Value.Binary(Value.Var("__triplet"), BinaryOp.Index, Value.Num(2))
+      )
+    val compareLabels =
+      LowerExpr.Binary(expectedLabel, BinaryOp.Equal, labelArgLower)
 
     val operationHandlerLowered = Expr
       .Let(
@@ -221,11 +236,23 @@ object Handler {
 
   private def forwardUnhandledOperation: LowerExpr = {
     val labelArgLower =
-      LowerExpr.Index(LowerExpr.Var(tripletVar), LowerExpr.Num(0))
+      LowerExpr.Binary(
+        LowerExpr.Var(tripletVar),
+        BinaryOp.Index,
+        LowerExpr.Num(0)
+      )
     val paramArgLower =
-      LowerExpr.Index(LowerExpr.Var(tripletVar), LowerExpr.Num(1))
+      LowerExpr.Binary(
+        LowerExpr.Var(tripletVar),
+        BinaryOp.Index,
+        LowerExpr.Num(1)
+      )
     val resumptionArgLower =
-      LowerExpr.Index(LowerExpr.Var(tripletVar), LowerExpr.Num(2))
+      LowerExpr.Binary(
+        LowerExpr.Var(tripletVar),
+        BinaryOp.Index,
+        LowerExpr.Num(2)
+      )
     val newResumption =
       LowerExpr.Lambda(
         "__x",

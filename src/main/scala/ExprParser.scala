@@ -7,7 +7,19 @@ object ExprParser {
       extends IllegalArgumentException(message)
 
   def parse(source: ScalaString): Expr =
-    Parser(Tokenizer.tokenize(source)).parseProgram()
+    Parser(Tokenizer.tokenize(source), splitLines(source)).parseProgram()
+
+  private def splitLines(source: ScalaString): Vector[ScalaString] = {
+    val rawLines = source.split("\n", -1)
+    val builder = Vector.newBuilder[ScalaString]
+    var index = 0
+
+    while index < rawLines.length do
+      builder += rawLines(index)
+      index += 1
+
+    builder.result()
+  }
 
   private enum TokenKind {
     case Identifier
@@ -22,9 +34,18 @@ object ExprParser {
     case Comma
     case Semicolon
     case Plus
+    case Minus
+    case Star
+    case Slash
+    case Percent
     case PlusPlus
     case Equals
     case EqualsEquals
+    case BangEquals
+    case GreaterThan
+    case LessThan
+    case GreaterThanOrEqual
+    case LessThanOrEqual
     case Arrow
     case FatArrow
     case Eof
@@ -126,6 +147,10 @@ object ExprParser {
               if index + 1 < source.length && source.charAt(index + 1) == '/' =>
             skipLineComment()
 
+          case '/' =>
+            add(TokenKind.Slash, "/", line, column)
+            advance()
+
           case '"' =>
             readString(line, column)
 
@@ -184,6 +209,24 @@ object ExprParser {
             add(TokenKind.Plus, "+", line, column)
             advance()
 
+          case '-'
+              if index + 1 < source.length && source.charAt(index + 1) == '>' =>
+            add(TokenKind.Arrow, "->", line, column)
+            advance()
+            advance()
+
+          case '-' =>
+            add(TokenKind.Minus, "-", line, column)
+            advance()
+
+          case '*' =>
+            add(TokenKind.Star, "*", line, column)
+            advance()
+
+          case '%' =>
+            add(TokenKind.Percent, "%", line, column)
+            advance()
+
           case '='
               if index + 1 < source.length && source.charAt(index + 1) == '=' =>
             add(TokenKind.EqualsEquals, "==", line, column)
@@ -200,10 +243,30 @@ object ExprParser {
             add(TokenKind.Equals, "=", line, column)
             advance()
 
-          case '-'
-              if index + 1 < source.length && source.charAt(index + 1) == '>' =>
-            add(TokenKind.Arrow, "->", line, column)
+          case '!'
+              if index + 1 < source.length && source.charAt(index + 1) == '=' =>
+            add(TokenKind.BangEquals, "!=", line, column)
             advance()
+            advance()
+
+          case '>'
+              if index + 1 < source.length && source.charAt(index + 1) == '=' =>
+            add(TokenKind.GreaterThanOrEqual, ">=", line, column)
+            advance()
+            advance()
+
+          case '<'
+              if index + 1 < source.length && source.charAt(index + 1) == '=' =>
+            add(TokenKind.LessThanOrEqual, "<=", line, column)
+            advance()
+            advance()
+
+          case '>' =>
+            add(TokenKind.GreaterThan, ">", line, column)
+            advance()
+
+          case '<' =>
+            add(TokenKind.LessThan, "<", line, column)
             advance()
 
           case other =>
@@ -214,7 +277,7 @@ object ExprParser {
     }
   }
 
-  private case class Parser(tokens: Vector[Token]) {
+  private case class Parser(tokens: Vector[Token], sourceLines: Vector[ScalaString]) {
     private var index = 0
 
     def parseProgram(): Expr = {
@@ -227,7 +290,7 @@ object ExprParser {
       if acceptKeyword("let") then parseLet()
       else if acceptKeyword("handle") then parseHandle()
       else if acceptKeyword("if") then parseIfElse()
-      else if acceptKeyword("return") then Expr.Return(parseValue())
+      else if acceptKeyword("return") then Expr.Return(parseValue("return"))
       else if acceptKeyword("do") then parseDo()
       else parseApp()
 
@@ -252,7 +315,7 @@ object ExprParser {
     }
 
     private def parseIfElse(): Expr = {
-      val cond = parseValue()
+      val cond = parseValue("if condition")
       expectKeyword("then")
       val thenBranch = parseExpr()
       expectKeyword("else")
@@ -263,15 +326,15 @@ object ExprParser {
     private def parseDo(): Expr = {
       val label = expectIdentifier()
       expect(TokenKind.LParen, "(")
-      val arg = parseValue()
+      val arg = parseValue(s"argument to do $label(...)")
       expect(TokenKind.RParen, ")")
       Expr.Do(label, arg)
     }
 
     private def parseApp(): Expr = {
-      val func = parseValue()
+      val func = parseValue("function position", allowApplicationAfter = true)
       expect(TokenKind.LParen, "(")
-      val arg = parseValue()
+      val arg = parseValue("function argument")
       expect(TokenKind.RParen, ")")
       Expr.App(func, arg)
     }
@@ -309,35 +372,99 @@ object ExprParser {
       OperationClause(label, param, resumption, parseExpr())
     }
 
-    private def parseValue(): Value =
-      parseEquality()
+    private def parseValue(
+        context: ScalaString = "value",
+        allowApplicationAfter: Boolean = false
+    ): Value = {
+      val value = parseEquality()
+
+      if !allowApplicationAfter && check(TokenKind.LParen) then
+        throw unsupportedApplication(context)
+
+      value
+    }
 
     private def parseEquality(): Value = {
+      var left = parseComparison()
+
+      while
+        current.kind == TokenKind.EqualsEquals || current.kind == TokenKind.BangEquals
+      do
+        val op =
+          if accept(TokenKind.EqualsEquals) then BinaryOp.Equal
+          else
+            expect(TokenKind.BangEquals, "!=")
+            BinaryOp.NotEqual
+
+        left = Value.Binary(left, op, parseComparison())
+
+      left
+    }
+
+    private def parseComparison(): Value = {
       var left = parseConcat()
 
-      while accept(TokenKind.EqualsEquals) do
-        val right = parseConcat()
-        left = Value.Equality(left, right)
+      while
+        current.kind == TokenKind.GreaterThan ||
+        current.kind == TokenKind.LessThan ||
+        current.kind == TokenKind.GreaterThanOrEqual ||
+        current.kind == TokenKind.LessThanOrEqual
+      do
+        val op =
+          if accept(TokenKind.GreaterThan) then BinaryOp.GreaterThan
+          else if accept(TokenKind.LessThan) then BinaryOp.LessThan
+          else if accept(TokenKind.GreaterThanOrEqual) then
+            BinaryOp.GreaterThanOrEqual
+          else
+            expect(TokenKind.LessThanOrEqual, "<=")
+            BinaryOp.LessThanOrEqual
+
+        left = Value.Binary(left, op, parseConcat())
 
       left
     }
 
     private def parseConcat(): Value = {
-      var left = parseAdd()
+      var left = parseAdditive()
 
       while accept(TokenKind.PlusPlus) do
-        val right = parseAdd()
-        left = Value.Concat(left, right)
+        val right = parseAdditive()
+        left = Value.Binary(left, BinaryOp.Concat, right)
 
       left
     }
 
-    private def parseAdd(): Value = {
+    private def parseAdditive(): Value = {
+      var left = parseMultiplicative()
+
+      while current.kind == TokenKind.Plus || current.kind == TokenKind.Minus do
+        val op =
+          if accept(TokenKind.Plus) then BinaryOp.Add
+          else
+            expect(TokenKind.Minus, "-")
+            BinaryOp.Subtract
+
+        left = Value.Binary(left, op, parseMultiplicative())
+
+      left
+    }
+
+    private def parseMultiplicative(): Value = {
       var left = parsePostfix()
 
-      while accept(TokenKind.Plus) do
-        val right = parsePostfix()
-        left = Value.Add(left, right)
+      while
+        current.kind == TokenKind.Star ||
+        current.kind == TokenKind.Slash ||
+        current.kind == TokenKind.Percent
+      do
+        val op =
+          if accept(TokenKind.Star) then BinaryOp.Multiply
+          else if accept(TokenKind.Slash) then BinaryOp.Divide
+          else
+            expect(TokenKind.Percent, "%")
+            BinaryOp.Modulo
+
+        left = Value.Binary(left, op, parsePostfix())
 
       left
     }
@@ -346,15 +473,16 @@ object ExprParser {
       var value = parsePrimaryValue()
 
       while accept(TokenKind.LBracket) do
-        val indexExpr = parseValue()
+        val indexExpr = parseValue("index expression")
         expect(TokenKind.RBracket, "]")
-        value = Value.Index(value, indexExpr)
+        value = Value.Binary(value, BinaryOp.Index, indexExpr)
 
       value
     }
 
     private def parsePrimaryValue(): Value =
       if acceptKeyword("fn") then parseLambda()
+      else if acceptKeyword("rec") then parseRec()
       else if accept(TokenKind.Number) then
         Value.Num(Integer.parseInt(previous.lexeme))
       else if accept(TokenKind.String) then Value.String(previous.lexeme)
@@ -372,12 +500,19 @@ object ExprParser {
       Value.Lambda(param, parseExpr())
     }
 
+    private def parseRec(): Value = {
+      val name = expectIdentifier()
+      val param = expectIdentifier()
+      expect(TokenKind.FatArrow, "=>")
+      Value.Rec(name, param, parseExpr())
+    }
+
     private def parseArray(): Value = {
       val elements = List.newBuilder[Value]
 
       if !check(TokenKind.RBracket) then
-        elements += parseValue()
-        while accept(TokenKind.Comma) do elements += parseValue()
+        elements += parseValue("array element")
+        while accept(TokenKind.Comma) do elements += parseValue("array element")
 
       expect(TokenKind.RBracket, "]")
       Value.Array(elements.result())
@@ -420,9 +555,24 @@ object ExprParser {
         if current.kind == TokenKind.Eof then "end of file"
         else s"'${current.lexeme}'"
 
+      ParseError(formatError(s"Expected $expected, found $found", current))
+    }
+
+    private def unsupportedApplication(context: ScalaString): ParseError =
       ParseError(
-        s"Expected $expected at ${current.line}:${current.column}, found $found"
+        formatError(
+          s"Function application is not allowed directly inside $context. " +
+            s"Only a standalone expression can be a call, so rewrite this with `let x = f(arg) in ...` first.",
+          current
+        )
       )
+
+    private def formatError(message: ScalaString, token: Token): ScalaString = {
+      val lineText =
+        sourceLines.lift(token.line - 1).getOrElse("")
+      val caret = List.fill(math.max(token.column, 1) - 1)(" ").mkString + "^"
+
+      s"Parse error at ${token.line}:${token.column}: $message\n$lineText\n$caret"
     }
   }
 }

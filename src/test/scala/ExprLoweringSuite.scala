@@ -1,9 +1,9 @@
-import expr.{Expr, Value}
+import expr.{BinaryOp, Expr, Value}
 
 class ExprLoweringSuite extends ExprSuiteSupport {
   test("lowers return expressions to continuation-passing JavaScript") {
     assertLoweredJs(
-      Expr.Return(Value.Add(Value.Num(1), Value.Num(2))),
+      Expr.Return(Value.Binary(Value.Num(1), BinaryOp.Add, Value.Num(2))),
       "(__k) => __k(1 + 2)"
     )
   }
