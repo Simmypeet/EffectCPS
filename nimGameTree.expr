@@ -1,0 +1,38 @@
+let aliceTurn = return rec aliceTurn x => 
+    if x <= 0 then 
+        return "Bob" 
+    else 
+        let m = do Move(["Alice", x]) in
+        let bobTurn = return rec bobTurn y => 
+            if y <= 0 then 
+                return "Alice" 
+            else 
+                let m = do Move(["Bob", y]) in
+                let aliceRes = aliceTurn(y - m) in 
+                return aliceRes
+        in 
+        let bobRes = bobTurn(x - m) in 
+        return bobRes 
+in
+
+let game = return fn n => let res = aliceTurn(n) in return res
+in
+
+handle game(4) with {
+    return x -> return ["Game over, winner is", x]
+    case Move(op, k) -> 
+        let availableSticks = return op[1] in
+        let result1 = if availableSticks >= 1 then 
+            let move1 = k(1) in return ["Take", 1, move1]
+            else return []
+            in
+        let result2 = if availableSticks >= 2 then 
+            let move2 = k(2) in return ["Take", 2, move2]
+            else return []
+            in
+        let result3 = if availableSticks >= 3 then 
+            let move3 = k(3) in return ["Take", 3, move3]
+            else return []
+            in
+        return [op[0], "Has", availableSticks, result1, result2, result3]
+}
