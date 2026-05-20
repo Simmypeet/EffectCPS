@@ -1,6 +1,10 @@
 import expr.{Expr, Handler, OperationClause, ReturnClause, Value}
 import lowerExpr.LowerExpr
 import scala.sys.process._
+import expr.LoweringStrategy
+import expr.CuryCpsLoweringStrategy
+
+given LoweringStrategy = CuryCpsLoweringStrategy
 
 class MySuite extends munit.FunSuite {
   private def assertLoweredJs(expr: Expr, expected: String): Unit =
@@ -44,6 +48,13 @@ class MySuite extends munit.FunSuite {
     assertEquals(expr.toJavaScript, """x === 0 ? "zero" : x + 1""")
   }
 
+  test("emits JavaScript for absurd") {
+    assertEquals(
+      LowerExpr.Absurd.toJavaScript,
+      """(() => { throw new Error("absurd"); })()"""
+    )
+  }
+
   test("lowers return expressions to continuation-passing JavaScript") {
     assertLoweredJs(
       Expr.Return(Value.Add(Value.Num(1), Value.Num(2))),
@@ -82,7 +93,7 @@ class MySuite extends munit.FunSuite {
 
   test("lowers drunkToss with handlers written in Expr syntax and executes it with node") {
     val loweredJs = Examples.allChoicesDrunkToss.cps().toJavaScript
-    val script = Examples.renderDrunkTossJavaScript
+    val script = Examples.renderDrunkTossJavaScript()
 
     assert(loweredJs.contains("Choose"))
     assert(loweredJs.contains("Fail"))
