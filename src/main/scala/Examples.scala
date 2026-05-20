@@ -1,4 +1,4 @@
-import expr.{Expr, Handler, OperationClause, ReturnClause, Value}
+import expr.{Expr, ExprCompiler, Handler, OperationClause, ReturnClause, Value}
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
@@ -58,9 +58,7 @@ object Examples {
   def renderDrunkTossJavaScript()(implicit
       strategy: LoweringStrategy
   ): String = {
-    val loweredJs = strategy.lowerTopLevel(allChoicesDrunkToss).toJavaScript
-
-    s"process.stdout.write(JSON.stringify($loweredJs));"
+    ExprCompiler.emitJavaScript(allChoicesDrunkToss)(using strategy)
   }
 
   def writeDrunkTossJavaScript(
